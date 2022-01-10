@@ -30,6 +30,8 @@ self_url = None
 
 print = ic
 
+from denaro.sqlitedb import LiteDatabase
+db: LiteDatabase = None
 
 def ip_is_local(ip: str) -> bool:
     try:
@@ -173,22 +175,32 @@ async def _sync_blockchain(node_url: str = None):
         if not blocks:
             print('syncing complete')
             return
-        try:
-            assert await create_blocks(blocks)
-        except Exception as e:
-            print(e)
-            if local_cache is not None:
-                await db.delete_blocks(last_common_block)
-                await create_blocks(local_cache)
-            return
+        # try:
+        #     assert await create_blocks(blocks)
+        # except Exception as e:
+        #     print(e)
+        #     if local_cache is not None:
+        #         await db.delete_blocks(last_common_block)
+        #         await create_blocks(local_cache)
+        #     return
+
+
+        assert await create_blocks(blocks)
+
+        if local_cache is not None:
+            await db.delete_blocks(last_common_block)
+            await create_blocks(local_cache)
 
 
 async def sync_blockchain(node_url: str = None):
     try:
         return await _sync_blockchain(node_url)
     except Exception as e:
-        print(e)
+        print("sync_blockchain error", e)
         pass
+
+async def sync_blockchain(node_url: str = None):
+    return await _sync_blockchain(node_url)
 
 
 @app.on_event("startup")

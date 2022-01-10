@@ -38,6 +38,13 @@ class Database:
         return self
 
     @staticmethod
+    async def create(user='denaro', password='', database='denaro', host='127.0.0.1', ignore: bool = False):
+        from . sqlitedb import LiteDatabase
+        await LiteDatabase.create(user, password, database, host)
+        Database.instance = LiteDatabase.instance
+        return LiteDatabase.instance
+
+    @staticmethod
     async def get():
         if Database.instance is None:
             await Database.create(**Database.credentials)
