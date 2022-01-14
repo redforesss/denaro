@@ -297,9 +297,21 @@ class LiteDatabase(Database) :
         addresses = [point_to_string(point, address_format) for address_format in list(AddressFormat)]
         async with self.pool.acquire() as connection:
             txs = await connection.fetch(f'''SELECT tx_hex FROM transactions WHERE {str(" or ".join([f'tx_hex LIKE "%{s}%"' for s in search]))}''')
-            spender_txs = await connection.fetch("SELECT tx_hex FROM transactions WHERE $1 && inputs_addresses", addresses)
+
+            def intersetAddresse(addresses, rets):
+                txs_ = []
+                for address in addresses:
+                    for row in rets:
+                        tx_hex = row['tx_hex']
+                        inputs_addresses = row['inputs_addresses'] 
+                        if address in inputs_addresses:
+                            txs_.append(row)
+                return txs_
+            rets = await connection.fetch("SELECT tx_hex, inputs_addresses FROM transactions")
+            spender_txs = intersetAddresse(addresses, rets)
             if check_pending_txs:
-                spender_txs += await connection.fetch("SELECT tx_hex FROM pending_transactions WHERE $1 && inputs_addresses", addresses)
+                rets = await connection.fetch("SELECT tx_hex, inputs_addresses FROM pending_transactions")
+                spender_txs += intersetAddresse(addresses, rets)
         inputs = []
         index = {}
         for tx in txs:

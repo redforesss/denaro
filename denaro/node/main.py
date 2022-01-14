@@ -165,6 +165,7 @@ async def _sync_blockchain(node_url: str = None):
     limit = 1000
     while True:
         i = await db.get_next_block_id()
+        print("block id ", i)
         try:
             blocks = node_interface.get_blocks(i, limit)
         except Exception as e:
@@ -175,22 +176,14 @@ async def _sync_blockchain(node_url: str = None):
         if not blocks:
             print('syncing complete')
             return
-        # try:
-        #     assert await create_blocks(blocks)
-        # except Exception as e:
-        #     print(e)
-        #     if local_cache is not None:
-        #         await db.delete_blocks(last_common_block)
-        #         await create_blocks(local_cache)
-        #     return
-
-
-        assert await create_blocks(blocks)
-
-        if local_cache is not None:
-            await db.delete_blocks(last_common_block)
-            await create_blocks(local_cache)
-
+        try:
+            assert await create_blocks(blocks)
+        except Exception as e:
+            print(e)
+            if local_cache is not None:
+                await db.delete_blocks(last_common_block)
+                await create_blocks(local_cache)
+            return
 
 async def sync_blockchain(node_url: str = None):
     try:
