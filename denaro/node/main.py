@@ -25,7 +25,6 @@ db: Database = None
 NodesManager.init()
 nodes = NodesManager.get_nodes()
 started = False
-synced = False
 self_url = None
 
 print = ic
@@ -103,6 +102,7 @@ async def create_blocks(blocks: list):
             if isinstance(tx, CoinbaseTransaction):
                 txs.remove(tx)
                 break
+        merkle_tree_txs = [tx.hex() for tx in merkle_tree_txs]
         block['merkle_tree'] = get_transactions_merkle_tree(txs) if i > 22500 else get_transactions_merkle_tree_ordered(
             txs)
         block_content = block_to_bytes(last_block['hash'], block)
@@ -129,7 +129,7 @@ async def _sync_blockchain(node_url: str = None):
         nodes = NodesManager.get_nodes()
         if not nodes:
             return
-        node_url = nodes[0]
+        node_url = random.choice(nodes)
     node_url = node_url.strip('/')
     _, last_block = await calculate_difficulty()
     i = await db.get_next_block_id()
@@ -155,7 +155,9 @@ async def _sync_blockchain(node_url: str = None):
                     last_common_block = i = local_block['block']['id']
                     blocks_to_remove = await db.get_blocks(last_common_block + 1, 500)
                     transactions_to_remove = sum([block_to_remove['transactions'] for block_to_remove in blocks_to_remove], [])
+                    used_outputs = sum([[(tx_input.tx_hash, tx_input.index) for tx_input in (await Transaction.from_hex(transaction)).inputs] for transaction in transactions_to_remove], [])
                     await db.delete_blocks(last_common_block)
+                    await db.add_unspent_outputs(used_outputs)
                     for tx in transactions_to_remove:
                         await db.add_pending_transaction(await Transaction.from_hex(tx))
                     print([c['block']['id'] for c in local_cache])
@@ -222,9 +224,6 @@ async def middleware(request: Request, call_next):
         NodesManager.add_node(request.headers['Sender-Node'])
 
     if nodes and not started or (ip_is_local(hostname) or hostname == 'localhost'):
-        if not synced:
-            await sync_blockchain()
-            synced = True
         try:
             node_url = nodes[0]
             #requests.get(f'{node_url}/add_node', {'url': })
@@ -301,16 +300,15 @@ async def push_block(request: Request, background_tasks: BackgroundTasks, block_
         previous_block = await db.get_block(previous_hash)
         if previous_block is None:
             if 'Sender-Node' in request.headers:
-                await sync_blockchain(request.headers['Sender-Node'])
+                background_tasks.add_task(sync_blockchain, request.headers['Sender-Node'])
                 return {'ok': False,
                         'error': 'Previous hash not found, had to sync according to sender node, block may have been accepted'}
             else:
                 return {'ok': False, 'error': 'Previous hash not found'}
         id = previous_block['id'] + 1
     if next_block_id < id:
-        await sync_blockchain(request.headers['Sender-Node'] if 'Sender-Node' in request.headers else None)
-        if await db.get_next_block_id() != id + 1:
-            return {'ok': False, 'error': 'Could not sync blockchain'}
+        background_tasks.add_task(sync_blockchain, request.headers['Sender-Node'] if 'Sender-Node' in request.headers else None)
+        return {'ok': False, 'error': 'Blocks missing, had to sync according to sender node, block may have been accepted'}
     if next_block_id > id:
         return {'ok': False, 'error': 'Too old block'}
     final_transactions = []
@@ -324,20 +322,13 @@ async def push_block(request: Request, background_tasks: BackgroundTasks, block_
         pending_transactions = await db.get_pending_transactions_by_hash(hashes)
         if len(pending_transactions) < len(hashes):  # one or more tx not found
             if 'Sender-Node' in request.headers:
-                await sync_blockchain(request.headers['Sender-Node'])
+                background_tasks.add_task(sync_blockchain, request.headers['Sender-Node'])
                 return {'ok': False,
                         'error': 'Transaction hash not found, had to sync according to sender node, block may have been accepted'}
             else:
                 return {'ok': False, 'error': 'Transaction hash not found'}
         final_transactions.extend(pending_transactions)
     if not await create_block(block_content, final_transactions):
-        """if (True or await check_block_is_valid(block_content)) and id >= next_block_id and (request and 'Sender-Node' in request.headers): # fixme
-            _, last_block = await calculate_difficulty()
-            if previous_hash != last_block['hash']:
-                sender_node = request.headers['Sender-Node']
-                #await db.delete_block(next_block_id - 1)
-                await sync_blockchain(sender_node)
-                return {'ok': False, 'error': 'Blockchain has been resynchronized according to sender node, block may have been accepted'}"""
         return {'ok': False}
     background_tasks.add_task(propagate, 'push_block', {
         'block_content': block_content,
