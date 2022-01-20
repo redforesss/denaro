@@ -97,21 +97,21 @@ async def create_blocks(blocks: list):
     for block_info in blocks:
         block = block_info['block']
         txs_hex = block_info['transactions']
-        txs = merkle_tree_txs = [await Transaction.from_hex(tx) for tx in txs_hex]
+        txs = [await Transaction.from_hex(tx) for tx in txs_hex]
         for tx in txs:
             if isinstance(tx, CoinbaseTransaction):
                 txs.remove(tx)
                 break
-        merkle_tree_txs = [tx.hex() for tx in merkle_tree_txs]
-        block['merkle_tree'] = get_transactions_merkle_tree(txs) if i > 22500 else get_transactions_merkle_tree_ordered(
-            txs)
+        hex_txs = [tx.hex() for tx in txs]
+        block['merkle_tree'] = get_transactions_merkle_tree(hex_txs) if i > 22500 else get_transactions_merkle_tree_ordered(hex_txs)
         block_content = block_to_bytes(last_block['hash'], block)
 
-        if i <= 22500:
+        if i <= 22500 and sha256(block_content) != block['hash']:
             from itertools import permutations
-            for l in permutations(merkle_tree_txs):
-                txs = list(l)
-                block['merkle_tree'] = get_transactions_merkle_tree_ordered(txs)
+            random.shuffle(hex_txs)
+            for l in permutations(hex_txs):
+                _hex_txs = list(l)
+                block['merkle_tree'] = get_transactions_merkle_tree_ordered(_hex_txs)
                 block_content = block_to_bytes(last_block['hash'], block)
                 if sha256(block_content) == block['hash']:
                     break
@@ -134,9 +134,9 @@ async def _sync_blockchain(node_url: str = None):
     _, last_block = await calculate_difficulty()
     i = await db.get_next_block_id()
     node_interface = NodeInterface(node_url)
-    if last_block != {}:
+    local_cache = None
+    if last_block != {} and last_block['id'] > 500:
         remote_last_block = node_interface.get_block(i-1)['block']
-        local_cache = None
         if remote_last_block['hash'] != last_block['hash']:
             print(remote_last_block['hash'])
             offset, limit = i - 500, 500
