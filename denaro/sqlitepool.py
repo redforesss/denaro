@@ -125,7 +125,7 @@ class SQLit3PoolConnection(PoolingConnection):
         return self.conn.cursor()
 
     async def fetch(self, query, *args, timeout=None) -> list:
-        #print("fetch")
+        print("fetch ->\n", query, *args)
         sql = self._formatQuerySymbol(query)
         parameters = self._converArgs(*args)
         
@@ -133,7 +133,7 @@ class SQLit3PoolConnection(PoolingConnection):
         return cur.fetchall()
 
     async def fetchval(self, query, *args, column=0, timeout=None):
-        #print("fetchval ")
+        print("fetchval ->\n", query, args)
         sql = self._formatQuerySymbol(query)
         parameters = self._converArgs(*args)
         cur = self.Conn.execute(sql, parameters)
@@ -145,7 +145,7 @@ class SQLit3PoolConnection(PoolingConnection):
         return 
 
     async def fetchrow(self, query, *args, timeout=None):
-        #print("fetchrow ")
+        print("fetchrow ->\n", query, args)
         sql = self._formatQuerySymbol(query)
         parameters = self._converArgs(*args)
         cur = self.Conn.execute(sql, parameters)
@@ -153,7 +153,7 @@ class SQLit3PoolConnection(PoolingConnection):
         return row
 
     async def execute(self, query: str, *args, timeout: float=None) -> str:
-        #print("execute ->", query, args)
+        print("execute ->", query, args)
         sql = self._formatQuerySymbol(query)
         parameters = self._converArgs(*args)
         cu = self.Conn.execute(sql, parameters)
@@ -161,7 +161,7 @@ class SQLit3PoolConnection(PoolingConnection):
         return str(cu.rowcount)
 
     async def executemany(self, query: str, *args, timeout: float=None) -> str:
-        #print("executemany ->\n" , query, args)
+        print("executemany ->\n" , query, args)
         sql = self._formatQuerySymbol(query)
         #parameters = map(lambda x : self._converArgs(x), args)
         #print("parameters", parameters)
@@ -251,10 +251,10 @@ sqlite3.register_adapter(decimal.Decimal, adapt_decimal)
 sqlite3.register_converter("DECTEXT", convert_decimal)
 
 def adapt_datetime(d):
-    return d.timestamp()
+    return str(d)
 
 def convert_datetime(s):
-    return datetime.datetime.fromtimestamp(int(s.decode()))
+    return datetime.datetime.fromisoformat(s.decode())
 
 # Register the adapter
 sqlite3.register_adapter(datetime.datetime, adapt_datetime)

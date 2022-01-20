@@ -1,8 +1,7 @@
 from datetime import datetime
 from decimal import Decimal
-from dateutil import parser
 from typing import List, Union, Tuple
-import os
+from pathlib import Path
 
 from .sqlitepool import Pool
 
@@ -11,7 +10,7 @@ from .transactions import Transaction, CoinbaseTransaction, TransactionInput
 
 from . import Database
 
-LOCAL_DB_NAME = "denarolite.db"
+LOCAL_DB_NAME = "DB/denarolite.db"
 
 class LiteDatabase(Database) :
 
@@ -60,12 +59,15 @@ class LiteDatabase(Database) :
     async def create(user='denaro', password='', database='denaro', host='127.0.0.1'):
         self = LiteDatabase()
         
-        needCreate = not os.path.exists(LOCAL_DB_NAME)
         self.pool = Pool(database= LOCAL_DB_NAME)
         
         LiteDatabase.instance = self
 
-        if needCreate : 
+        dbPath = Path(LOCAL_DB_NAME)
+        if not dbPath.exists() : 
+            if not dbPath.parent.exists():
+                dbPath.parent.mkdir(parents=True, exist_ok=True)
+            dbPath.touch(exist_ok=True)
             await self.createTable()
         return self
 
@@ -134,6 +136,23 @@ class LiteDatabase(Database) :
                 [point_to_string(await tx_input.get_public_key()) for tx_input in transaction.inputs] if isinstance(transaction, Transaction) else [],
                 transaction.fees if isinstance(transaction, Transaction) else 0
             )
+
+    async def add_transactions(self, transactions: List[Union[Transaction, CoinbaseTransaction]], block_hash: str):
+        if len(transactions) == 0: return
+        
+        data = []
+        for transaction in transactions:
+            data.append([
+                block_hash,
+                transaction.hash(),
+                transaction.hex(),
+                [point_to_string(await tx_input.get_public_key()) for tx_input in transaction.inputs] if isinstance(transaction, Transaction) else [],
+                transaction.fees if isinstance(transaction, Transaction) else 0
+            ])
+        
+        async with self.pool.acquire() as connection:
+            await connection.executemany('INSERT INTO transactions (block_hash, tx_hash, tx_hex, inputs_addresses, fees) VALUES ($1, $2, $3, $4, $5)', data)
+
 
     async def add_block(self, id: int, block_hash: str, address: str, random: int, difficulty: Decimal, reward: Decimal, timestamp: Union[datetime, str]):
         """"""
@@ -206,11 +225,7 @@ class LiteDatabase(Database) :
     # async def get_last_block(self) -> dict:
     #     async with self.pool.acquire() as connection:
     #         last_block = await connection.fetchrow("SELECT * FROM blocks ORDER BY id DESC LIMIT 1")
-    #     if last_block is None:
-    #         return None
-    #     last_block = dict(last_block)
-    #     last_block['address'] = last_block['address'].strip(' ')
-    #     return last_block
+    #     return normalize_block(last_block) if last_block is not None else None
 
     # async def get_next_block_id(self) -> int:
     #     async with self.pool.acquire() as connection:
@@ -221,11 +236,7 @@ class LiteDatabase(Database) :
     # async def get_block(self, block_hash: str) -> dict:
     #     async with self.pool.acquire() as connection:
     #         block = await connection.fetchrow('SELECT * FROM blocks WHERE hash = $1', block_hash)
-    #         if block is None:
-    #             return None
-    #         block = dict(block)
-    #         block['address'] = block['address'].strip(' ')
-    #         return block
+    #     return normalize_block(block) if block is not None else None
 
     async def get_blocks(self, offset: int, limit: int) -> list:
         async with self.pool.acquire() as connection:
@@ -249,11 +260,7 @@ class LiteDatabase(Database) :
     # async def get_block_by_id(self, block_id: int) -> dict:
     #     async with self.pool.acquire() as connection:
     #         block = await connection.fetchrow('SELECT * FROM blocks WHERE id = $1', block_id)
-    #         if block is None:
-    #             return None
-    #         block = dict(block)
-    #         block['address'] = block['address'].strip(' ')
-    #         return block
+    #     return normalize_block(block) if block is not None else None
 
     # async def get_block_transactions(self, block_hash: str, check_signatures: bool = True) -> List[Union[Transaction, CoinbaseTransaction]]:
     #     async with self.pool.acquire() as connection:
@@ -282,14 +289,14 @@ class LiteDatabase(Database) :
     #     async with self.pool.acquire() as connection:
     #         txs = await connection.fetch('SELECT tx_hex FROM transactions WHERE true')
     #         transactions = {sha256(tx['tx_hex']): await Transaction.from_hex(tx['tx_hex'], False) for tx in txs}
-    #         outputs = sum([[transaction.hash() + bytes([index]).hex() for index in range(len(transaction.outputs))] for transaction in transactions.values()], [])
+    #         outputs = sum([[(transaction.hash(), index) for index in range(len(transaction.outputs))] for transaction in transactions.values()], [])
     #         for tx_hash, transaction in transactions.items():
     #             if isinstance(transaction, CoinbaseTransaction):
     #                 continue
-    #             for output in outputs.copy():
-    #                 if output in tx_hash:
-    #                     outputs.remove(output)
-    #         return [(output[:64], int(output[64:], 16)) for output in outputs]
+    #             for tx_input in transaction.inputs:
+    #                 if (tx_input.tx_hash, tx_input.index) in outputs:
+    #                     outputs.remove((tx_input.tx_hash, tx_input.index))
+    #         return outputs
 
     async def get_spendable_outputs(self, address: str, check_pending_txs: bool = False) -> List[TransactionInput]:
         point = string_to_point(address)
@@ -313,28 +320,28 @@ class LiteDatabase(Database) :
                 rets = await connection.fetch("SELECT tx_hex, inputs_addresses FROM pending_transactions")
                 spender_txs += intersetAddresse(addresses, rets)
         inputs = []
-        index = {}
+        outputs = []
         for tx in txs:
-            used_outputs = []
             tx_hash = sha256(tx['tx_hex'])
             tx = await Transaction.from_hex(tx['tx_hex'], check_signatures=False)
             for i, tx_output in enumerate(tx.outputs):
-                if tx_output.address in addresses and i not in used_outputs:
+                if tx_output.address in addresses:
                     tx_input = TransactionInput(tx_hash, i)
                     tx_input.amount = tx_output.amount
                     tx_input.transaction = tx
-                    index[tx_hash + str(i)] = tx_input
+                    outputs.append((tx_hash, i))
                     inputs.append(tx_input)
-        used_outputs = []
         for spender_tx in spender_txs:
             spender_tx = await Transaction.from_hex(spender_tx['tx_hex'], check_signatures=False)
             for tx_input in spender_tx.inputs:
-                if tx_input.tx_hash + str(tx_input.index) in index:
-                    used_outputs.append(tx_input.tx_hash + str(tx_input.index))
+                if (tx_input.tx_hash, tx_input.index) in outputs:
+                    outputs.remove((tx_input.tx_hash, tx_input.index))
+
+        unspent_outputs = await self.get_unspent_outputs(outputs)
 
         final = []
         for tx_input in inputs:
-            if tx_input.tx_hash + str(tx_input.index) not in used_outputs:
+            if (tx_input.tx_hash, tx_input.index) in unspent_outputs:
                 final.append(tx_input)
 
         return final

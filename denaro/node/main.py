@@ -191,7 +191,7 @@ async def sync_blockchain(node_url: str = None):
     try:
         return await _sync_blockchain(node_url)
     except Exception as e:
-        print("sync_blockchain error", e)
+        print(e)
         pass
 
 async def sync_blockchain(node_url: str = None):
