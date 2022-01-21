@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 import decimal
-import re, datetime, io, sys
+import re, datetime
 import sqlite3
 from queue import Queue
 from abc import abstractmethod
@@ -13,7 +13,6 @@ class PoolException(Exception):
     pass
 
 class Pool(object):
-    '''一个数据库连接池'''
     def __init__(self, maxActive=5, maxWait=None, init_size=0, db_type="SQLite3", **config):
         self.__freeConns = Queue(maxActive)
         self.maxWait = maxWait
@@ -29,7 +28,6 @@ class Pool(object):
         self.releaseAll()
     
     def releaseAll(self):
-        '''释放资源，关闭池中的所有连接'''
         print("release Pool..")
         while self.__freeConns and not self.__freeConns.empty():
             con = self.get()
@@ -38,18 +36,14 @@ class Pool(object):
         self.__freeConns = None
  
     def _create_conn(self):
-        '''创建连接 '''
         if self.db_type in dbcs:
-            return dbcs[self.db_type](**self.config);
+            return dbcs[self.db_type](**self.config)
         
     def get(self, timeout=None):
-        '''获取一个连接
-        @param timeout:超时时间
-        '''
         if timeout is None:
             timeout = self.maxWait
         conn = None
-        if self.__freeConns.empty():#如果容器是空的，直接创建一个连接
+        if self.__freeConns.empty():
             conn = self._create_conn()
         else:
             conn = self.__freeConns.get(timeout=timeout)
@@ -57,11 +51,8 @@ class Pool(object):
         return conn
     
     async def release(self, conn):
-        '''将一个连接放回池中
-        @param conn: 连接对象
-        '''
         conn.pool = None
-        if(self.__freeConns.full()):#如果当前连接池已满，直接关闭连接
+        if(self.__freeConns.full()):
             conn.release()
             return
         self.__freeConns.put_nowait(conn)
@@ -99,7 +90,7 @@ class PoolingConnection(object):
         if self.conn is None and self.pool is not None:
             self.conn = self._create_conn(**self.config)
         if self.conn is None:
-            raise PoolException("无法创建数据库连接 或连接已关闭")
+            raise PoolException("PoolingConnection Error!")
         return getattr(self.conn, val)
  
     @abstractmethod
@@ -125,18 +116,15 @@ class SQLit3PoolConnection(PoolingConnection):
         return self.conn.cursor()
 
     async def fetch(self, query, *args, timeout=None) -> list:
-        print("fetch ->\n", query, *args)
+        #print("fetch ->\n", query, *args)
         sql = self._formatQuerySymbol(query)
-        parameters = self._converArgs(*args)
-        
-        cur = self.Conn.execute(sql, parameters)
+        cur = self.Conn.execute(sql, args)
         return cur.fetchall()
 
     async def fetchval(self, query, *args, column=0, timeout=None):
-        print("fetchval ->\n", query, args)
+        #print("fetchval ->\n", query, args)
         sql = self._formatQuerySymbol(query)
-        parameters = self._converArgs(*args)
-        cur = self.Conn.execute(sql, parameters)
+        cur = self.Conn.execute(sql, args)
         all = cur.fetchall()
         if len(all) <= 0 : return 
         rows = all[column]
@@ -145,35 +133,34 @@ class SQLit3PoolConnection(PoolingConnection):
         return 
 
     async def fetchrow(self, query, *args, timeout=None):
-        print("fetchrow ->\n", query, args)
+        #print("fetchrow ->\n", query, args)
         sql = self._formatQuerySymbol(query)
-        parameters = self._converArgs(*args)
-        cur = self.Conn.execute(sql, parameters)
+        cur = self.Conn.execute(sql, args)
         row = cur.fetchone()
         return row
 
     async def execute(self, query: str, *args, timeout: float=None) -> str:
-        print("execute ->", query, args)
+        #print("execute ->", query, args)
         sql = self._formatQuerySymbol(query)
-        parameters = self._converArgs(*args)
-        cu = self.Conn.execute(sql, parameters)
+        cu = self.Conn.execute(sql, args)
         self.Conn.commit()
         return str(cu.rowcount)
 
     async def executemany(self, query: str, *args, timeout: float=None) -> str:
-        print("executemany ->\n" , query, args)
+        #print("executemany ->\n" , query, args)
         sql = self._formatQuerySymbol(query)
-        #parameters = map(lambda x : self._converArgs(x), args)
-        #print("parameters", parameters)
+
         cu = self.Conn.executemany(sql, *args)
         self.Conn.commit()
         return str(cu.rowcount)
         
     def _converKeyword(self, query) -> str:
+        return query
+
         keywords = {
             "index" : "'index'",
         }
-        #sql = re.sub(" index", "'index'", query)
+        sql = re.sub(" index", "'index'", query)
         sql = query
         return sql
 
@@ -181,38 +168,14 @@ class SQLit3PoolConnection(PoolingConnection):
         newArgs = []
         
         for arg in args:
-            if type(arg) is datetime.datetime:
-                param = arg
-            elif type(arg) is str:
-                param = arg
-            elif type(arg) is int:
-                param = arg
-            elif type(arg) is decimal.Decimal:
-                param = arg
+            if isinstance(arg, list):
+                param = str(arg)
+            elif isinstance(arg, tuple):
+                param = str(arg)
             else:
-                param = f"'{str(arg)}'"
-            newArgs.append(param)
-        #print ("_converArgs \n", newArgs)
-        return tuple(newArgs)
-                
-    def _formatQuery(self, query, *args) -> str:
-        parameters = {}
-        for i in range(len(args)):
-            arg = args[i]
-            param = f"'{str(arg)}'"
-            print(f"{args[i]} -> {type(arg)}")
-
-            if type(arg) is datetime.datetime:
-                param = str(int(arg.timestamp()))
-            if type(arg) is list:
                 param = arg
-            
-            parameters[f'${i+1}'] = param
-        print (parameters)
-
-        sql = re.sub('\$\d+', lambda x:parameters[x.group()], self._converKeyword(query))
-        print ("sql: " + sql)
-        return sql
+            newArgs.append(param)
+        return tuple(newArgs)         
 
     def _formatQuerySymbol(self, query) -> str:
         sql = re.sub('\$\d+', "?", self._converKeyword(query))
@@ -222,22 +185,7 @@ class SQLit3PoolConnection(PoolingConnection):
 dbcs = {"SQLite3": SQLit3PoolConnection}
  
 
-
-# def adapt_arrayAddress(addresses):
-#     out = io.BytesIO()
-#     np.save(out, arr)
-#     out.seek(0)
-#     return sqlite3.Binary(out.read())
-
-# def convert_array(text):
-#     out = io.BytesIO(text)
-#     out.seek(0)
-#     return np.load(out)
-
-# sqlite3.register_adapter(list(str), adapt_arrayAddress)
-
-# sqlite3.register_converter("array", convert_array)
-
+#DECTEXT type
 def adapt_decimal(d):
     return str(d)
 
@@ -250,56 +198,27 @@ sqlite3.register_adapter(decimal.Decimal, adapt_decimal)
 # Register the converter
 sqlite3.register_converter("DECTEXT", convert_decimal)
 
+
+#datetime.datetime type
 def adapt_datetime(d):
     return str(d)
 
 def convert_datetime(s):
     return datetime.datetime.fromisoformat(s.decode())
 
-# Register the adapter
 sqlite3.register_adapter(datetime.datetime, adapt_datetime)
 
-# Register the converter
 sqlite3.register_converter("DATETIME", convert_datetime)
 
+#TEXT[] type
+def adapt_arrayAddress(addresses):
+    return str(addresses)
 
-async def test():
-    pool = Pool(database="./product2.db")
+sqlite3.register_adapter(list, adapt_arrayAddress)
+sqlite3.register_adapter(tuple, adapt_arrayAddress)
 
-    with pool.get() as cu:
-        #cu = conn.cursor()
-        # cu.execute("create table lang(name, first_appeared)")
+def convert_text_array(s):
+    return eval(s.decode())
 
-        s = '''INSERT INTO transactions (block_hash, tx_hash, tx_hex, inputs_addresses, fees) VALUES (?, ?, ?, ?, ?)'''
-        s2 = "select * FROM unspent_outputs WHERE (tx_hash, _index) in ( values ('8376a6b4a41fb3c797c216babc5648b63afbec2de1196c4e38406c96ef98f418', 0), ('8376a6b4a41fb3c797c216babc5648b63afbec2de1196c4e38406c96ef98f418', 0))"
-        s3 = "INSERT INTO unspent_outputs (tx_hash, _index) VALUES ($1, $2) ([('a8b53282ce031172be80aa1ce9787d9979efe38d1f28d6bd402c0d2b05e86fee', 0)],)"
-        args =   "('bfe9ebf617b99b04042ad5eeebe741168e55e33cd59699b5b5fe4737109403b5', '40682e6d2ab1a03ce46e082a92cc265d58eb4ca23ac9f849755240e82d267747')"
+sqlite3.register_converter("TEXT[]", convert_text_array)
 
-        #cu.executemany(s3, [])
-        #cu.execute(s2)
-        # cu.execute(s, args)
-        # cu.connection.commit()
-        #cu.execute("insert into lang values (?, ?)", ("A", 1988))
-        
-        # for row in cu.execute("select * from blocks"):
-        #     print(row.keys())
-        #     print(tuple(row))
-
-    test_get_transaction_by_contains_multi()
-
-def test_get_transaction_by_contains_multi():
-    pool = Pool(database="./product2.db")
-    with pool.get() as cu:
-        contains = ['01011', "01012"]
-        fs = [f'tx_hex LIKE "%{contains}%"' for contains in contains]
-
-        print(" or ".join([f'tx_hex LIKE "%{contains}%"' for contains in contains]))
-        ignore = "bfe9ebf617b99b04042ad5eeebe741168e55e33cd59699b5b5fe4737109403b5"
-        sql = f'''SELECT tx_hash FROM transactions WHERE ({str(" or ".join([f'tx_hex LIKE "%{contains}%"' for contains in contains]))}) AND tx_hash != ? LIMIT 1'''
-        print (sql)
-        ret = cu.execute(sql, [ignore])
-        print(tuple(ret.fetchone()))
-
-if __name__ == "__main__":
-    import asyncio
-    asyncio.run(test())
