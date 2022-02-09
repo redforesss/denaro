@@ -2,6 +2,7 @@ import json
 import os
 from os.path import dirname, exists
 
+import httpx
 import pickledb
 import requests
 
@@ -15,6 +16,10 @@ class NodesManager:
     nodes: list = None
     db = db
 
+    timeout = httpx.Timeout(3.0)
+    client = httpx.Client(timeout=timeout)
+    async_client = httpx.AsyncClient(timeout=timeout)
+
     @staticmethod
     def init():
         NodesManager.db._loaddb()
@@ -25,10 +30,17 @@ class NodesManager:
         NodesManager.db.set('nodes', NodesManager.nodes)
 
     @staticmethod
-    def is_node_working(node: str):
+    async def request(url: str, method: str = 'GET', **kwargs):
+        async with NodesManager.async_client.stream(method, url, **kwargs) as response:
+            async for chunk in response.aiter_text():
+                res = chunk
+                break
+        return json.loads(res)
+
+    @staticmethod
+    async def is_node_working(node: str):
         try:
-            r = requests.get(node, timeout=5)
-            r.json()
+            await NodesManager.request(node)
             return True
         except:
             return False

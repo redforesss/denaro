@@ -1,13 +1,11 @@
 import ipaddress
 import random
 from os import environ
-from typing import Union
 
-import requests
 from asyncpg import UniqueViolationError
 from fastapi import FastAPI, Body
+from httpx import TimeoutException
 from icecream import ic
-from requests import ReadTimeout
 from starlette.background import BackgroundTasks
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -62,7 +60,7 @@ def ip_is_local(ip: str) -> bool:
     return False
 
 
-def propagate(path: str, args: dict, ignore=None):
+async def propagate(path: str, args: dict, ignore=None):
     global self_url
     nodes = NodesManager.get_nodes()
     print(args)
@@ -78,13 +76,13 @@ def propagate(path: str, args: dict, ignore=None):
             continue
         try:
             if path == 'push_block':
-                r = requests.post(f'{node_url}/{path}', json=args, timeout=20, headers={'Sender-Node': self_url})
+                r = await NodesManager.request(f'{node_url}/{path}', method='POST', json=args, headers={'Sender-Node': self_url})
             else:
-                r = requests.get(f'{node_url}/{path}', args, timeout=5, headers={'Sender-Node': self_url})
-            print('node response: ', r.json())
+                r = await NodesManager.request(f'{node_url}/{path}', params=args, headers={'Sender-Node': self_url})
+            print('node response: ', r)
         except Exception as e:
             print(e)
-            if not isinstance(e, ReadTimeout):
+            if not isinstance(e, TimeoutException):
                 NodesManager.get_nodes().remove(_node_url)
             NodesManager.sync()
 
@@ -108,7 +106,6 @@ async def create_blocks(blocks: list):
 
         if i <= 22500 and sha256(block_content) != block['hash'] and i != 17972:
             from itertools import permutations
-            random.shuffle(hex_txs)
             for l in permutations(hex_txs):
                 _hex_txs = list(l)
                 block['merkle_tree'] = get_transactions_merkle_tree_ordered(_hex_txs)
@@ -227,7 +224,7 @@ async def middleware(request: Request, call_next):
         try:
             node_url = nodes[0]
             #requests.get(f'{node_url}/add_node', {'url': })
-            r = requests.get(f'{node_url}/get_nodes')
+            r = NodesManager.client.get(f'{node_url}/get_nodes')
             j = r.json()
             nodes.extend(j['result'])
             NodesManager.sync()
@@ -250,7 +247,7 @@ async def middleware(request: Request, call_next):
             NodesManager.sync()
 
             try:
-                propagate('add_node', {'url': self_url})
+                await propagate('add_node', {'url': self_url})
             except:
                 pass
     try:
@@ -380,7 +377,7 @@ async def add_node(url: str, background_tasks: BackgroundTasks):
         return {'ok': False, 'error': 'Node already present'}
     else:
         try:
-            assert NodesManager.is_node_working(url)
+            assert await NodesManager.is_node_working(url)
             background_tasks.add_task(propagate, 'add_node', {'url': url}, url)
             NodesManager.add_node(url)
             return {'ok': True, 'result': 'Node added'}
