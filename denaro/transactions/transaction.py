@@ -19,7 +19,8 @@ class Transaction:
     block_hash: str = None
 
     def __init__(self, inputs: List[TransactionInput], outputs: List[TransactionOutput], message: bytes = None):
-        assert len(inputs) < 256
+        if len(inputs) >= 256:
+            raise Exception(f'You can spend max 256 inputs in a single transactions, not {len(inputs)}')
         self.inputs = inputs
         self.outputs = outputs
         self.message = message
@@ -110,7 +111,7 @@ class Transaction:
         return True
 
     def _verify_outputs(self):
-        return all(tx_output.verify() for tx_output in self.outputs)
+        return (self.outputs or self.hash() == '915ddf143e14647ba1e04c44cf61e57084254c44cd4454318240f359a414065c') and all(tx_output.verify() for tx_output in self.outputs)
 
     async def verify(self, check_double_spend: bool = True) -> bool:
         if not self._verify_double_spend_same_transaction():
