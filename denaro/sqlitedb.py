@@ -298,6 +298,27 @@ class LiteDatabase(Database) :
     #                     outputs.remove((tx_input.tx_hash, tx_input.index))
     #         return outputs
 
+    def intersetAddresse(self, addresses, rets):
+        txs_ = []
+        for address in addresses:
+            for row in rets:
+                inputs_addresses = row['inputs_addresses'] 
+                if address in inputs_addresses:
+                    txs_.append(row)
+        return txs_
+
+    async def get_address_transactions(self, address: str, check_pending_txs: bool = False, check_signatures: bool = False, limit: int = 50) -> List[Union[Transaction, CoinbaseTransaction]]:
+        point = string_to_point(address)
+        search = ['%' + point_to_bytes(string_to_point(address), address_format).hex() + '%' for address_format in list(AddressFormat)]
+        addresses = [point_to_string(point, address_format) for address_format in list(AddressFormat)]
+        async with self.pool.acquire() as connection:
+            rets = await connection.fetch(f'''SELECT tx_hex, inputs_addresses, blocks.id AS block_no FROM transactions INNER JOIN blocks ON (transactions.block_hash = blocks.hash) WHERE {str(" or ".join([f'tx_hex LIKE "%{s}%"' for s in search]))} ORDER BY block_no DESC''')
+            txs = self.intersetAddresse(addresses, rets)[:limit]
+            if check_pending_txs:
+                rets = await connection.fetch(f'''SELECT tx_hex, inputs_addresses FROM pending_transactions WHERE {str(" or ".join([f'tx_hex LIKE "%{s}%"' for s in addresses]))}''')
+                txs += self.intersetAddresse(addresses, rets)
+        return [await Transaction.from_hex(tx['tx_hex'], check_signatures) for tx in txs]
+
     async def get_spendable_outputs(self, address: str, check_pending_txs: bool = False) -> List[TransactionInput]:
         point = string_to_point(address)
         search = ['%'+point_to_bytes(string_to_point(address), address_format).hex()+'%' for address_format in list(AddressFormat)]
@@ -305,20 +326,12 @@ class LiteDatabase(Database) :
         async with self.pool.acquire() as connection:
             txs = await connection.fetch(f'''SELECT tx_hex FROM transactions WHERE {str(" or ".join([f'tx_hex LIKE "%{s}%"' for s in search]))}''')
 
-            def intersetAddresse(addresses, rets):
-                txs_ = []
-                for address in addresses:
-                    for row in rets:
-                        tx_hex = row['tx_hex']
-                        inputs_addresses = row['inputs_addresses'] 
-                        if address in inputs_addresses:
-                            txs_.append(row)
-                return txs_
+            
             rets = await connection.fetch("SELECT tx_hex, inputs_addresses FROM transactions")
-            spender_txs = intersetAddresse(addresses, rets)
+            spender_txs = self.intersetAddresse(addresses, rets)
             if check_pending_txs:
                 rets = await connection.fetch("SELECT tx_hex, inputs_addresses FROM pending_transactions")
-                spender_txs += intersetAddresse(addresses, rets)
+                spender_txs += self.intersetAddresse(addresses, rets)
         inputs = []
         outputs = []
         for tx in txs:
