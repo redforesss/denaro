@@ -276,7 +276,7 @@ class Database:
                     if (tx_input.tx_hash, tx_input.index) in outputs:
                         outputs.remove((tx_input.tx_hash, tx_input.index))
             return outputs
-            
+
     async def get_address_transactions(self, address: str, check_pending_txs: bool = False, check_signatures: bool = False, limit: int = 50) -> List[Union[Transaction, CoinbaseTransaction]]:
         point = string_to_point(address)
         search = ['%' + point_to_bytes(string_to_point(address), address_format).hex() + '%' for address_format in list(AddressFormat)]
