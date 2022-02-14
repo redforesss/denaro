@@ -4,7 +4,7 @@ import time
 import denaro
 from denaro.constants import ENDIAN
 from denaro.manager import get_difficulty, check_block_is_valid, Manager, get_transactions_merkle_tree
-from denaro.helpers import sha256, timestamp
+from denaro.helpers import sha256, timestamp, string_to_bytes
 
 from icecream import ic
 
@@ -25,12 +25,16 @@ async def run():
         print(difficulty)
         Manager.difficulty = None
         address = sys.argv[1]
+        address_bytes = string_to_bytes(address)
         t = time.process_time()
         i = 0
         a = timestamp()
         txs = await db.get_pending_transactions_limit(1000)
         merkle_tree = get_transactions_merkle_tree(txs)
-        prefix = bytes.fromhex(last_block['hash']) + bytes.fromhex(address) + bytes.fromhex(merkle_tree) + a.to_bytes(4, byteorder=ENDIAN) + int(difficulty * 10).to_bytes(2, ENDIAN)
+        prefix = bytes.fromhex(last_block['hash']) + address_bytes + bytes.fromhex(merkle_tree) + a.to_bytes(4, byteorder=ENDIAN) + int(difficulty * 10).to_bytes(2, ENDIAN)
+
+        if len(address_bytes) == 33:
+            prefix = (2).to_bytes(1, ENDIAN) + prefix
 
         found = True
         while not await check_block_is_valid(_hex := prefix + i.to_bytes(4, ENDIAN), (difficulty, last_block)):
@@ -44,6 +48,7 @@ async def run():
                     break
         if found:
             await sync_blockchain()
+            print(f'win!!\n\n_hex:\n{_hex} \ntxs:{txs}\n')
             res = await push_block(None, _hex.hex(), [tx.hex() for tx in txs], False)
             Manager.difficulty = None
             if res['ok'] and txs:
