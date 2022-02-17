@@ -76,9 +76,9 @@ async def propagate(path: str, args: dict, ignore=None):
             continue
         try:
             if path == 'push_block':
-                r = await NodesManager.request(f'{node_url}/{path}', method='POST', json=args, headers={'Sender-Node': self_url})
+                r = await NodesManager.request(f'{node_url}/{path}', method='POST', json=args, headers={'Sender-Node': self_url or ''})
             else:
-                r = await NodesManager.request(f'{node_url}/{path}', params=args, headers={'Sender-Node': self_url})
+                r = await NodesManager.request(f'{node_url}/{path}', params=args, headers={'Sender-Node': self_url or ''})
             print('node response: ', r)
         except Exception as e:
             print(e)
@@ -363,7 +363,7 @@ async def get_address_info(address: str, transactions_count_limit: int = 5):
     return {'ok': True, 'result': {
         'balance': balance,
         'spendable_outputs': [{'amount': output.amount, 'tx_hash': output.tx_hash, 'index': output.index} for output in outputs],
-        'transactions': [await transaction_to_json(tx) for tx in await db.get_address_transactions(address, limit=transactions_count_limit)]
+        'transactions': [await transaction_to_json(tx) for tx in await db.get_address_transactions(address, limit=transactions_count_limit, check_signatures=True)]
     }}
 
 
